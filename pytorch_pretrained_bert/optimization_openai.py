@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2018 The Open AI Team Authors and The HugginFace Inc. team.
+# Copyright 2018 The Open AI Team Authors and The HuggingFace Inc. team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,24 +19,11 @@ import torch
 from torch.optim import Optimizer
 from torch.optim.optimizer import required
 from torch.nn.utils import clip_grad_norm_
+import logging
+from .optimization import SCHEDULES, _LRSchedule, WarmupCosineWithWarmupRestartsSchedule, \
+    WarmupCosineWithHardRestartsSchedule, WarmupCosineSchedule, WarmupLinearSchedule, WarmupConstantSchedule
 
-def warmup_cosine(x, warmup=0.002):
-    s = 1 if x <= warmup else 0
-    return s*(x/warmup) + (1-s)*(0.5 * (1 + torch.cos(math.pi * x)))
-
-def warmup_constant(x, warmup=0.002):
-    s = 1 if x <= warmup else 0
-    return s*(x/warmup) + (1-s)*1
-
-def warmup_linear(x, warmup=0.002):
-    s = 1 if x <= warmup else 0
-    return (s*(x/warmup) + (1-s))*(1-x)
-
-SCHEDULES = {
-    'warmup_cosine':warmup_cosine,
-    'warmup_constant':warmup_constant,
-    'warmup_linear':warmup_linear,
-}
+logger = logging.getLogger(__name__)
 
 
 class OpenAIAdam(Optimizer):
@@ -47,17 +34,23 @@ class OpenAIAdam(Optimizer):
                  vector_l2=False, max_grad_norm=-1, **kwargs):
         if lr is not required and lr < 0.0:
             raise ValueError("Invalid learning rate: {} - should be >= 0.0".format(lr))
-        if schedule not in SCHEDULES:
+        if not isinstance(schedule, _LRSchedule) and schedule not in SCHEDULES:
             raise ValueError("Invalid schedule parameter: {}".format(schedule))
-        if not 0.0 <= warmup < 1.0 and not warmup == -1:
-            raise ValueError("Invalid warmup: {} - should be in [0.0, 1.0[ or -1".format(warmup))
         if not 0.0 <= b1 < 1.0:
-            raise ValueError("Invalid b1 parameter: {}".format(b1))
+            raise ValueError("Invalid b1 parameter: {} - should be in [0.0, 1.0[".format(b1))
         if not 0.0 <= b2 < 1.0:
-            raise ValueError("Invalid b2 parameter: {}".format(b2))
+            raise ValueError("Invalid b2 parameter: {} - should be in [0.0, 1.0[".format(b2))
         if not e >= 0.0:
-            raise ValueError("Invalid epsilon value: {}".format(e))
-        defaults = dict(lr=lr, schedule=schedule, warmup=warmup, t_total=t_total,
+            raise ValueError("Invalid epsilon value: {} - should be >= 0.0".format(e))
+        # initialize schedule object
+        if not isinstance(schedule, _LRSchedule):
+            schedule_type = SCHEDULES[schedule]
+            schedule = schedule_type(warmup=warmup, t_total=t_total)
+        else:
+            if warmup != -1 or t_total != -1:
+                logger.warning("warmup and t_total on the optimizer are ineffective when _LRSchedule object is provided as schedule. "
+                               "Please specify custom warmup and t_total in _LRSchedule object.")
+        defaults = dict(lr=lr, schedule=schedule,
                         b1=b1, b2=b2, e=e, weight_decay=weight_decay, vector_l2=vector_l2,
                         max_grad_norm=max_grad_norm)
         super(OpenAIAdam, self).__init__(params, defaults)
@@ -69,11 +62,8 @@ class OpenAIAdam(Optimizer):
                 state = self.state[p]
                 if len(state) == 0:
                     return [0]
-                if group['t_total'] != -1:
-                    schedule_fct = SCHEDULES[group['schedule']]
-                    lr_scheduled = group['lr'] * schedule_fct(state['step']/group['t_total'], group['warmup'])
-                else:
-                    lr_scheduled = group['lr']
+                lr_scheduled = group['lr']
+                lr_scheduled *= group['schedule'].get_lr(state['step'])
                 lr.append(lr_scheduled)
         return lr
 
@@ -123,11 +113,8 @@ class OpenAIAdam(Optimizer):
                 bias_correction1 = 1 - beta1 ** state['step']
                 bias_correction2 = 1 - beta2 ** state['step']
 
-                if group['t_total'] != -1:
-                    schedule_fct = SCHEDULES[group['schedule']]
-                    lr_scheduled = group['lr'] * schedule_fct(state['step']/group['t_total'], group['warmup'])
-                else:
-                    lr_scheduled = group['lr']
+                lr_scheduled = group['lr']
+                lr_scheduled *= group['schedule'].get_lr(state['step'])
 
                 step_size = lr_scheduled * math.sqrt(bias_correction2) / bias_correction1
 

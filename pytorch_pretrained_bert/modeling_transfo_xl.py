@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2018 Google AI, Google Brain and Carnegie Mellon University Authors and the HugginFace Inc. team.
+# Copyright 2018 Google AI, Google Brain and Carnegie Mellon University Authors and the HuggingFace Inc. team.
 # Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,8 @@
     Adapted from https://github.com/kimiyoung/transformer-xl.
     In particular https://github.com/kimiyoung/transformer-xl/blob/master/pytorch/mem_transformer.py
 """
+
+from __future__ import absolute_import, division, print_function, unicode_literals
 
 import os
 import copy
@@ -38,7 +40,7 @@ from torch.nn.parameter import Parameter
 
 from .modeling import BertLayerNorm as LayerNorm
 from .modeling_transfo_xl_utilities import ProjectedAdaptiveLogSoftmax, sample_logits
-from .file_utils import cached_path
+from .file_utils import cached_path, CONFIG_NAME, WEIGHTS_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +50,7 @@ PRETRAINED_MODEL_ARCHIVE_MAP = {
 PRETRAINED_CONFIG_ARCHIVE_MAP = {
     'transfo-xl-wt103': "https://s3.amazonaws.com/models.huggingface.co/bert/transfo-xl-wt103-config.json",
 }
-CONFIG_NAME = 'config.json'
-WEIGHTS_NAME = 'pytorch_model.bin'
+
 TF_WEIGHTS_NAME = 'model.ckpt'
 
 def build_tf_to_pytorch_map(model, config):
@@ -313,6 +314,11 @@ class TransfoXLConfig(object):
     def to_json_string(self):
         """Serializes this instance to a JSON string."""
         return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
+
+    def to_json_file(self, json_file_path):
+        """ Save this instance to a json file."""
+        with open(json_file_path, "w", encoding='utf-8') as writer:
+            writer.write(self.to_json_string())
 
 
 class PositionalEmbedding(nn.Module):
@@ -938,7 +944,7 @@ class TransfoXLPreTrainedModel(nn.Module):
         # Instantiate model.
         model = cls(config, *inputs, **kwargs)
         if state_dict is None and not from_tf:
-            state_dict = torch.load(resolved_archive_file, map_location='cpu' if not torch.cuda.is_available() else None)
+            state_dict = torch.load(resolved_archive_file, map_location='cpu')
         if from_tf:
             # Directly load from a TensorFlow checkpoint
             return load_tf_weights_in_transfo_xl(model, config, pretrained_model_name_or_path)
